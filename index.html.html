@@ -253,6 +253,24 @@ canvas#annualChart{width:100%!important;max-width:100%;}
 ::-webkit-scrollbar-track{background:transparent;}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
 ::-webkit-scrollbar-thumb:hover{background:var(--text-muted);}
+.sync-modal{position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.5);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;}
+.sync-box{background:#fff;border-radius:20px;padding:28px;width:380px;max-width:90vw;box-shadow:0 20px 60px rgba(0,0,0,.2);}
+.sync-box h3{font-size:17px;font-weight:700;margin-bottom:6px;}
+.sync-box p{font-size:13px;color:var(--text-muted);margin-bottom:20px;line-height:1.6;}
+.sync-input{font-family:'Pretendard',sans-serif;font-size:13px;width:100%;border:1.5px solid var(--border);border-radius:10px;padding:10px 14px;outline:none;margin-bottom:10px;transition:border-color .15s;}
+.sync-input:focus{border-color:var(--text-primary);}
+.sync-status{display:flex;align-items:center;gap:8px;font-size:12px;padding:10px 14px;border-radius:10px;margin-bottom:16px;}
+.sync-status.ok{background:#f0fff4;color:var(--saving-text);}
+.sync-status.err{background:#fff5f5;color:var(--income-text);}
+.sync-status.ing{background:var(--bg);color:var(--text-muted);}
+.sync-btns{display:flex;gap:8px;}
+.sync-btn{font-family:'Pretendard',sans-serif;font-size:13px;font-weight:600;padding:10px 16px;border-radius:10px;border:none;cursor:pointer;flex:1;transition:all .15s;}
+.sync-btn-primary{background:var(--text-primary);color:#fff;}
+.sync-btn-primary:hover{background:#2d2d4a;}
+.sync-btn-secondary{background:var(--border-light);color:var(--text-secondary);border:1px solid var(--border);}
+.sync-indicator{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;padding:4px 10px;border-radius:20px;cursor:pointer;transition:all .15s;}
+.sync-indicator.connected{background:#f0fff4;color:var(--saving-text);}
+.sync-indicator.disconnected{background:var(--border-light);color:var(--text-muted);}
 .toast{position:fixed;bottom:30px;right:30px;background:var(--text-primary);color:#fff;padding:12px 20px;border-radius:12px;font-size:13px;font-weight:600;box-shadow:var(--shadow-lg);transform:translateY(80px);opacity:0;transition:all .3s cubic-bezier(.34,1.56,.64,1);z-index:999;pointer-events:none;}
 .toast.show{transform:translateY(0);opacity:1;}
 
@@ -374,6 +392,10 @@ canvas#annualChart{width:100%!important;max-width:100%;}
     <button class="tab-btn" id="tabInvest" onclick="switchTab('invest')">💹 투자비율</button>
   </div>
   <div class="top-bar-actions">
+    <div class="sync-indicator disconnected" id="syncIndicator" onclick="openSyncModal()">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+      <span id="syncLabel">동기화</span>
+    </div>
     <button class="btn btn-secondary" onclick="toggleMasterPanel()">⚙ 규칙 관리</button>
     <button class="btn btn-primary" id="todayBtn" onclick="goToToday()">오늘</button>
   </div>
@@ -655,6 +677,26 @@ canvas#annualChart{width:100%!important;max-width:100%;}
 
 <div class="toast" id="toast"></div>
 
+<!-- GITHUB SYNC MODAL -->
+<div class="sync-modal" id="syncModal" style="display:none">
+  <div class="sync-box">
+    <h3>🔄 GitHub 동기화 설정</h3>
+    <p>Personal Access Token을 입력하면 회사·집 어디서나 같은 데이터를 볼 수 있어요.<br>토큰은 이 브라우저에만 저장되고 외부로 전송되지 않아요.</p>
+    <input class="sync-input" id="syncTokenInput" type="password" placeholder="ghp_로 시작하는 토큰 입력...">
+    <input class="sync-input" id="syncRepoInput" type="text" placeholder="저장소명 (예: fixed-cost-calendar)" value="fixed-cost-calendar">
+    <div class="sync-status ing" id="syncStatusBox">💡 토큰을 입력하고 연결해주세요</div>
+    <div class="sync-btns">
+      <button class="sync-btn sync-btn-secondary" onclick="closeSyncModal()">닫기</button>
+      <button class="sync-btn sync-btn-primary" onclick="connectSync()">연결하기</button>
+    </div>
+    <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);display:flex;gap:8px;">
+      <button class="sync-btn sync-btn-secondary" onclick="pushData()" style="font-size:12px">⬆ 지금 저장</button>
+      <button class="sync-btn sync-btn-secondary" onclick="pullData()" style="font-size:12px">⬇ 불러오기</button>
+      <button class="sync-btn sync-btn-secondary" onclick="disconnectSync()" style="font-size:12px;color:var(--income-text)">연결 해제</button>
+    </div>
+  </div>
+</div>
+
 <script>
 'use strict';
 
@@ -668,9 +710,15 @@ function loadStorage(){
   try{cellOverrides=JSON.parse(localStorage.getItem(SK_OV))||{};}catch{cellOverrides={};}
   try{cellMemos=JSON.parse(localStorage.getItem(SK_MEMO))||{};}catch{cellMemos={};}
 }
-function saveRules(){localStorage.setItem(SK_RULES,JSON.stringify(masterRules));}
-function saveOverrides(){localStorage.setItem(SK_OV,JSON.stringify(cellOverrides));}
-function saveMemos(){localStorage.setItem(SK_MEMO,JSON.stringify(cellMemos));}
+let autoPushTimer=null;
+function schedulePush(){
+  if(!ghToken||!ghUser)return;
+  clearTimeout(autoPushTimer);
+  autoPushTimer=setTimeout(()=>pushData(true),3000);
+}
+function saveRules(){localStorage.setItem(SK_RULES,JSON.stringify(masterRules));schedulePush();}
+function saveOverrides(){localStorage.setItem(SK_OV,JSON.stringify(cellOverrides));schedulePush();}
+function saveMemos(){localStorage.setItem(SK_MEMO,JSON.stringify(cellMemos));schedulePush();}
 
 /* ══════════ 공휴일 ══════════ */
 const HOLIDAYS={
@@ -1347,9 +1395,132 @@ function installApp(){if(deferredPrompt){deferredPrompt.prompt();deferredPrompt.
 function dismissBanner(){document.getElementById('installBanner').style.display='none';}
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 
+/* ══════════ GITHUB SYNC ══════════ */
+const GH_TOKEN_KEY='fixedcal_gh_token';
+const GH_REPO_KEY='fixedcal_gh_repo';
+const GH_USER_KEY='fixedcal_gh_user';
+const GH_DATA_FILE='fixedcal-data.json';
+
+let ghToken='', ghRepo='', ghUser='';
+
+function loadSyncConfig(){
+  ghToken=localStorage.getItem(GH_TOKEN_KEY)||'';
+  ghRepo=localStorage.getItem(GH_REPO_KEY)||'fixed-cost-calendar';
+  ghUser=localStorage.getItem(GH_USER_KEY)||'';
+  updateSyncUI();
+}
+
+function updateSyncUI(){
+  const ind=document.getElementById('syncIndicator');
+  const lbl=document.getElementById('syncLabel');
+  if(ghToken&&ghUser){
+    ind.className='sync-indicator connected';
+    lbl.textContent='동기화됨';
+  } else {
+    ind.className='sync-indicator disconnected';
+    lbl.textContent='동기화';
+  }
+}
+
+function openSyncModal(){
+  document.getElementById('syncModal').style.display='flex';
+  if(ghToken) document.getElementById('syncTokenInput').value=ghToken;
+  if(ghRepo) document.getElementById('syncRepoInput').value=ghRepo;
+}
+function closeSyncModal(){document.getElementById('syncModal').style.display='none';}
+
+async function connectSync(){
+  const token=document.getElementById('syncTokenInput').value.trim();
+  const repo=document.getElementById('syncRepoInput').value.trim();
+  if(!token){setSyncStatus('err','토큰을 입력해주세요');return;}
+  setSyncStatus('ing','🔄 연결 중...');
+  try{
+    const res=await fetch('https://api.github.com/user',{headers:{'Authorization':'token '+token}});
+    if(!res.ok){setSyncStatus('err','❌ 토큰이 올바르지 않아요');return;}
+    const data=await res.json();
+    ghToken=token; ghRepo=repo; ghUser=data.login;
+    localStorage.setItem(GH_TOKEN_KEY,token);
+    localStorage.setItem(GH_REPO_KEY,repo);
+    localStorage.setItem(GH_USER_KEY,data.login);
+    setSyncStatus('ok','✅ '+data.login+'님, 연결됐어요!');
+    updateSyncUI();
+    // 자동으로 최신 데이터 불러오기
+    await pullData(true);
+  } catch(e){setSyncStatus('err','❌ 연결 실패: '+e.message);}
+}
+
+function setSyncStatus(type,msg){
+  const el=document.getElementById('syncStatusBox');
+  el.className='sync-status '+type;
+  el.textContent=msg;
+}
+
+async function pushData(silent=false){
+  if(!ghToken||!ghUser){if(!silent)showToast('⚠ 먼저 동기화 연결을 해주세요');return;}
+  const payload={rules:masterRules,overrides:cellOverrides,memos:cellMemos,savedAt:new Date().toISOString()};
+  const content=btoa(unescape(encodeURIComponent(JSON.stringify(payload,null,2))));
+  try{
+    // 기존 파일 SHA 가져오기
+    let sha='';
+    const getRes=await fetch(`https://api.github.com/repos/${ghUser}/${ghRepo}/contents/${GH_DATA_FILE}`,
+      {headers:{'Authorization':'token '+ghToken}});
+    if(getRes.ok){const d=await getRes.json();sha=d.sha;}
+    // 파일 업로드
+    const body={message:'고정비 데이터 동기화',content};
+    if(sha) body.sha=sha;
+    const putRes=await fetch(`https://api.github.com/repos/${ghUser}/${ghRepo}/contents/${GH_DATA_FILE}`,
+      {method:'PUT',headers:{'Authorization':'token '+ghToken,'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(putRes.ok){
+      if(!silent)showToast('☁ GitHub에 저장됐어요!');
+      setSyncStatus('ok','✅ 저장 완료 — '+new Date().toLocaleTimeString('ko-KR'));
+    } else {
+      if(!silent)showToast('❌ 저장 실패');
+      setSyncStatus('err','❌ 저장 실패');
+    }
+  } catch(e){if(!silent)showToast('❌ 오류: '+e.message);}
+}
+
+async function pullData(silent=false){
+  if(!ghToken||!ghUser){if(!silent)showToast('⚠ 먼저 동기화 연결을 해주세요');return;}
+  try{
+    const res=await fetch(`https://api.github.com/repos/${ghUser}/${ghRepo}/contents/${GH_DATA_FILE}`,
+      {headers:{'Authorization':'token '+ghToken}});
+    if(!res.ok){
+      if(!silent)setSyncStatus('ing','💡 저장된 데이터가 없어요. 데이터를 입력 후 저장해주세요');
+      return;
+    }
+    const d=await res.json();
+    const payload=JSON.parse(decodeURIComponent(escape(atob(d.content.replace(/
+/g,'')))));
+    masterRules=payload.rules||[];
+    cellOverrides=payload.overrides||{};
+    cellMemos=payload.memos||{};
+    saveRules();saveOverrides();saveMemos();
+    refreshCalendar();
+    const t=new Date(payload.savedAt).toLocaleString('ko-KR');
+    if(!silent){
+      showToast('⬇ 데이터를 불러왔어요!');
+      setSyncStatus('ok','✅ 불러오기 완료 — 저장시각: '+t);
+    } else {
+      setSyncStatus('ok','✅ 연결됨 — 마지막 저장: '+t);
+    }
+  } catch(e){if(!silent)showToast('❌ 불러오기 실패: '+e.message);}
+}
+
+function disconnectSync(){
+  ghToken='';ghUser='';ghRepo='fixed-cost-calendar';
+  localStorage.removeItem(GH_TOKEN_KEY);
+  localStorage.removeItem(GH_REPO_KEY);
+  localStorage.removeItem(GH_USER_KEY);
+  updateSyncUI();
+  setSyncStatus('ing','💡 연결이 해제됐어요');
+  showToast('🔌 동기화 연결 해제됨');
+}
+
 /* ══════════ INIT ══════════ */
 function init(){
   loadStorage();
+  loadSyncConfig();
   renderMaster();
   renderCalendar(true);
   const diff=Math.max(0,Math.floor((new Date()-START)/86400000));
